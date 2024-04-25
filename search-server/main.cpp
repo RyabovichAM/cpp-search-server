@@ -61,9 +61,10 @@ public:
     void AddDocument(int document_id, const string& document) {
         const vector<string> words = SplitIntoWordsNoStop(document);
         const int document_size = words.size();
+        const double TF_part = 1.0 / document_size;
 
         for(const string& word : words) {
-            invert_index_[word][document_id] += 1.0 / document_size;
+            invert_index_[word][document_id] += TF_part;
         }
 
         ++document_count_;
@@ -110,6 +111,10 @@ private:
         return query_words;
     }
 
+    double CalculateIDF(const string& query_word) const {
+        return log(static_cast<double>(document_count_) / invert_index_.at(query_word).size());
+    }
+
     vector<Document> FindAllDocuments(const set<string>& query_words) const {
         vector<Document> matched_documents;
 
@@ -118,7 +123,7 @@ private:
 
         for (const string& query_word : query_words) {
             if(query_word[0] != '-' && invert_index_.count(query_word) != 0) {
-                IDF = log(static_cast<double>(document_count_) / invert_index_.at(query_word).size());
+                IDF = CalculateIDF(query_word);
                 for(const auto& [id, TF] : invert_index_.at(query_word))
                     id_relevance[id] += TF * IDF;
             } else if (query_word[0] == '-' && invert_index_.count(query_word) != 0)
