@@ -10,6 +10,7 @@
 using namespace std;
 
 const int MAX_RESULT_DOCUMENT_COUNT = 5;
+const double EPSILON = 1e-6;
 
 string ReadLine() {
     string s;
@@ -95,36 +96,34 @@ public:
 
     void AddDocument(int document_id, const string& document, DocumentStatus status,
                                    const vector<int>& ratings) {
-        if (document_id < 0 || documents_.count(document_id) != 0) {
-            throw invalid_argument("Wrong id passed in AddDocument");
+        if (document_id < 0) {
+            throw invalid_argument("Negative id pass into AddDocument");
         }
+        if(documents_.count(document_id) != 0) {
+            throw invalid_argument("Existing id pass into AddDocument");
+        }
+
         const vector<string> words = SplitIntoWordsNoStop(document);
         const double inv_word_count = 1.0 / words.size();
         for (const string& word : words) {
-            if(IsWordHaveSpecialChar(word)) {
-                throw invalid_argument("Document text, added in AddDocument, has special characters");
-            }
             word_to_document_freqs_[word][document_id] += inv_word_count;
         }
+        indexed_ids_.push_back(document_id);
         documents_.emplace(document_id, DocumentData{ComputeAverageRating(ratings), status});
     }
 
     template <typename DocumentPredicate>
     vector<Document> FindTopDocuments(const string& raw_query, DocumentPredicate document_predicate) const {
-        Query query;
-        if(!ParseQuery(raw_query, query)) {
-            throw invalid_argument("Bad query in FindTopDocuments");
-        }
+        Query query = ParseQuery(raw_query);
 
         auto matched_documents = FindAllDocuments(query, document_predicate);
 
         sort(matched_documents.begin(), matched_documents.end(),
              [](const Document& lhs, const Document& rhs) {
-                 if (abs(lhs.relevance - rhs.relevance) < 1e-6) {
-                     return lhs.rating > rhs.rating;
-                 } else {
-                     return lhs.relevance > rhs.relevance;
+                 if (abs(lhs.relevance - rhs.relevance) < EPSILON) {
+                    return lhs.rating > rhs.rating;
                  }
+                    return lhs.relevance > rhs.relevance;
              });
         if (matched_documents.size() > MAX_RESULT_DOCUMENT_COUNT) {
             matched_documents.resize(MAX_RESULT_DOCUMENT_COUNT);
@@ -146,18 +145,11 @@ public:
     }
 
     int GetDocumentId(int index) const {
-        vector<int> ids;
-        for( const auto& [id, _] : documents_ ){
-            ids.push_back(id);
-        }
-        return ids.at(index);
+        return indexed_ids_.at(index - 1);
     }
 
     tuple<vector<string>, DocumentStatus> MatchDocument(const string& raw_query, int document_id) const {
-        Query query;
-        if(!ParseQuery(raw_query, query)) {
-            throw invalid_argument("Bad query in MatchDocument");
-        }
+        Query query = ParseQuery(raw_query);
 
         vector<string> matched_words;
         for (const string& word : query.plus_words) {
@@ -188,6 +180,7 @@ private:
     const set<string> stop_words_;
     map<string, map<int, double>> word_to_document_freqs_;
     map<int, DocumentData> documents_;
+    vector<int> indexed_ids_;
 
     bool IsStopWord(const string& word) const {
         return stop_words_.count(word) > 0;
@@ -205,7 +198,7 @@ private:
 
     bool IsWordHaveSpecialChar(const string& word) const {
         for (char ch : word) {
-            if(ch >= 0 && ch <= 31) {
+            if(ch >= '\0' && ch < ' ') {
                 return true;
             }
         }
@@ -215,6 +208,9 @@ private:
     vector<string> SplitIntoWordsNoStop(const string& text) const {
         vector<string> words;
         for (const string& word : SplitIntoWords(text)) {
+            if(IsWordHaveSpecialChar(word)) {
+                throw invalid_argument("Word \"" + word + "\" passed into SplitIntoWordsNoStop has special character");
+            }
             if (!IsStopWord(word)) {
                 words.push_back(word);
             }
@@ -240,6 +236,12 @@ private:
     };
 
     QueryWord ParseQueryWord(string text) const {
+        if(IsBadMinusRequestWord(text)){
+            throw invalid_argument("Bad request word \"" + text + "\" pass into ParseQueryWord");
+        }
+        if(IsWordHaveSpecialChar(text)) {
+            throw invalid_argument("Word \"" + text + "\" passed into ParseQueryWord has special character");
+        }
         bool is_minus = false;
         // Word shouldn't be empty
         if (text[0] == '-') {
@@ -254,12 +256,9 @@ private:
         set<string> minus_words;
     };
 
-    [[nodiscard]] bool ParseQuery(const string& text, Query& query) const {
-
+    Query ParseQuery(const string& text) const {
+        Query query;
         for (const string& word : SplitIntoWords(text)) {
-            if(IsBadMinusRequestWord(word) || IsWordHaveSpecialChar(word)){
-                return false;
-            }
             const QueryWord query_word = ParseQueryWord(word);
             if (!query_word.is_stop) {
                 if (query_word.is_minus) {
@@ -269,7 +268,7 @@ private:
                 }
             }
         }
-        return true;
+        return query;
     }
 
     // Existence required
